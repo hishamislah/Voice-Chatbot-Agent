@@ -78,8 +78,10 @@ Classify the user's question into ONE of these intents:
    - Example: "What is the password policy for remote access?" → SPECIFIC
    - RULE: Question mentions a SPECIFIC policy type, feature, or scenario
 
-2. "simple_fact" - Simple factual questions that don't need documents
+2. "simple_fact" - Simple factual questions ABOUT THE COMPANY that don't need document retrieval
    - Example: "What is the company name?"
+   - Example: "What are the working hours?"
+   - RULE: Must be a basic question about company information, NOT external facts
 
 3. "ambiguous" - Question is too BROAD/VAGUE and needs clarification
    - Example: "what is leave policy" → AMBIGUOUS (doesn't specify which leave type)
@@ -89,8 +91,11 @@ Classify the user's question into ONE of these intents:
    - RULE: Question asks about a general category WITHOUT specifying the exact type
    - KEY: "leave policy" is broad, but "sick leave policy" is specific
 
-4. "out_of_scope" - Question is not about company policies
+4. "out_of_scope" - Question is NOT about company policies or company information
    - Example: "What's the weather today?"
+   - Example: "Who is the indian president?"
+   - Example: "What is the capital of France?"
+   - RULE: Any question about external facts, world knowledge, or topics unrelated to the company
 
 Also identify the policy category if applicable:
 - "HR" - Hiring, termination, probation, employee rights
@@ -628,7 +633,7 @@ def main():
     ]
 
     while True:
-        question = input("\n💬 You: ").strip()
+        question = input("\nYou: ").strip()
 
         if not question:
             continue
@@ -647,17 +652,17 @@ def main():
         result = assistant.ask(question)
 
         # Display answer cleanly
-        print("\n🤖 ChatBot:", result['answer'])
+        print("\n ChatBot:", result['answer'])
 
         # Display sources only if they exist
         if result['sources']:
-            print("\n📚 Sources:")
+            print("\n Sources:")
             for i, source in enumerate(result['sources'], 1):
                 print(f"  [{i}] {source['source']} - Page {source['page']}")
 
         # Display workflow path
         if result.get('workflow_path'):
-            print("\n🔄 LangGraph Workflow:")
+            print("\n LangGraph Workflow:")
             workflow = " → ".join(result['workflow_path'])
             print(f"   START → {workflow} → END")
 
