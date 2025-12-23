@@ -603,7 +603,7 @@ def main():
     Interactive demo with clean chatbot interface
     """
     print("\n" + "="*70)
-    print("🤖 ENTERPRISE POLICY ASSISTANT")
+    print(" ENTERPRISE POLICY ASSISTANT")
     print("="*70)
     print("\nHello! I'm an AI assistant that helps you understand company policies.")
     print("\nI can answer questions about:")
@@ -614,7 +614,7 @@ def main():
     print("\n" + "="*70)
 
     # Initialize system (quiet mode)
-    print("\n⏳ Loading policy documents and initializing AI system...")
+    print("\n Loading policy documents and initializing AI system...")
     assistant = PolicyAssistant(docs_folder="./docs", verbose=False)
     print("✓ Ready!\n")
 
