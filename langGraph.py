@@ -14,15 +14,10 @@ from rag_node import SimpleRAG
 # Load environment variables
 load_dotenv()
 
-
-# =============================================================================
 # STATE DEFINITION
-# =============================================================================
 
 class PolicyAssistantState(TypedDict):
-    """
-    Complete state that flows through the graph
-    """
+
     question: str                    # User's original question
     intent: str                      # Classified intent (policy_query, simple_fact, etc.)
     category: str                    # Policy category (HR, Leave, IT, Compliance)
@@ -36,16 +31,11 @@ class PolicyAssistantState(TypedDict):
     workflow_path: list              # Track which nodes were executed
 
 
-# =============================================================================
 # AGENT TOOLS
-# =============================================================================
 
 class PolicyTools:
-    """
-    Complete toolkit for the agent
-    """
 
-    # Class-level storage for RAG system (avoids serialization issues)
+    # Class-level storage for RAG system 
     _rag_system = None
 
     @classmethod
@@ -510,10 +500,7 @@ def create_policy_assistant_graph():
     
     return app
 
-
-# =============================================================================
 # MAIN APPLICATION CLASS
-# =============================================================================
 
 class PolicyAssistant:
 
@@ -580,7 +567,7 @@ class PolicyAssistant:
             }
 
         except Exception as e:
-            print(f"\n❌ Error: {e}")
+            print(f"\n Error: {e}")
             import traceback
             traceback.print_exc()
             return {
@@ -594,13 +581,11 @@ class PolicyAssistant:
             }
 
 
-# =============================================================================
 # INTERACTIVE DEMO
-# =============================================================================
 
 def main():
     """
-    Interactive demo with clean chatbot interface
+    chatbot interface
     """
     print("\n" + "="*70)
     print(" ENTERPRISE POLICY ASSISTANT")
@@ -639,11 +624,11 @@ def main():
             continue
 
         if question.lower() in ['quit', 'exit', 'q']:
-            print("\n👋 ChatBot: Goodbye! Have a great day!")
+            print("\n ChatBot: Goodbye! Have a great day!")
             break
 
         if question.lower() == 'examples':
-            print("\n📋 Example Questions:")
+            print("\n Example Questions:")
             for i, q in enumerate(example_questions, 1):
                 print(f"  {i}. {q}")
             continue

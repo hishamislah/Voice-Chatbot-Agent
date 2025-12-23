@@ -74,31 +74,19 @@ class SimpleRAG:
         chunks = text_splitter.split_documents(all_pages)
 
         if verbose:
-            print(f"✓ Created {len(chunks)} chunks")
+            print(f" Created {len(chunks)} chunks")
 
             # STEP 3: Create embeddings and vector store
-            print("\n" + "="*60)
-            print("STEP 3: Creating Embeddings & Vector Store")
-            print("="*60)
-            print("Embeddings = Converting text to numbers that capture meaning")
-            print("Vector Store = Database optimized for similarity search")
-            print("\nThis may take a minute...")
 
         embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
 
-        # Create FAISS vector store - this makes searching super fast
+        # Create FAISS vector store 
         self.vector_store = FAISS.from_documents(
             documents=chunks,
             embedding=embeddings
         )
-
-        if verbose:
-            print(f" Vector store created with {len(chunks)} searchable chunks")
-            print("\n" + "="*60)
-            print("Setup Complete! Ready to answer questions.")
-            print("="*60)
 
     def search(self, question, num_results=3):
         """
