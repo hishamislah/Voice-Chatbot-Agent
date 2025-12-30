@@ -136,62 +136,6 @@ export default function AIChatCard({ className }: { className?: string }) {
           />
         ))}
 
-        {/* Glowing Orb */}
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20">
-          <motion.div
-            className="relative w-24 h-24"
-            animate={{
-              scale: [1, 1.1, 1],
-            }}
-            transition={{
-              duration: 3,
-              repeat: Infinity,
-              ease: "easeInOut",
-            }}
-          >
-            {/* Outer glow */}
-            <motion.div
-              className={cn(
-                "absolute inset-0 rounded-full blur-xl opacity-60 bg-gradient-to-br",
-                currentAgent.color
-              )}
-              animate={{
-                scale: [1, 1.2, 1],
-                opacity: [0.6, 0.8, 0.6],
-              }}
-              transition={{
-                duration: 2,
-                repeat: Infinity,
-                ease: "easeInOut",
-              }}
-            />
-
-            {/* Middle glow */}
-            <motion.div
-              className={cn(
-                "absolute inset-2 rounded-full blur-lg opacity-80 bg-gradient-to-br",
-                currentAgent.color
-              )}
-              animate={{
-                scale: [1.1, 1, 1.1],
-              }}
-              transition={{
-                duration: 2.5,
-                repeat: Infinity,
-                ease: "easeInOut",
-              }}
-            />
-
-            {/* Core orb */}
-            <div
-              className={cn(
-                "absolute inset-4 rounded-full bg-gradient-to-br shadow-2xl",
-                currentAgent.color
-              )}
-            />
-          </motion.div>
-        </div>
-
         {/* Agent Tabs */}
         <div className="flex gap-2 px-3 py-3 border-b border-white/10 relative z-10">
           {agents.map((agent) => {
