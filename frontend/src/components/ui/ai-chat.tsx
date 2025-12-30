@@ -1,5 +1,3 @@
-"use client";
-
 import { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Send, User, Briefcase, Headphones } from "lucide-react";

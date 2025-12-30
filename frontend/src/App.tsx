@@ -1,7 +1,7 @@
 import AIChatCard from "@/components/ui/ai-chat";
 import VoiceAssistant from "@/components/ui/voice-assistant";
 
-export default function Home() {
+export default function App() {
   return (
     <div className="flex min-h-screen bg-gradient-to-br from-slate-900 via-black to-slate-900">
       {/* Left Side - Voice Assistant */}
