@@ -140,7 +140,6 @@ REASON: <brief reason>"""),
 
             return results
         except Exception as e:
-            print(f"⚠️ Retrieval error: {e}")
             return []
     
     def generate_answer_with_citations(self, question: str, context_chunks: list) -> dict:
@@ -578,9 +577,6 @@ class PolicyAssistant:
             }
 
         except Exception as e:
-            print(f"\n Error: {e}")
-            import traceback
-            traceback.print_exc()
             return {
                 "answer": f"An error occurred: {str(e)}",
                 "sources": [],
@@ -615,18 +611,8 @@ def main():
     print("[OK] Ready!\n")
 
     print("="*70)
-    print("Type your question or 'examples' to see sample questions.")
     print("Type 'quit' to exit.")
     print("="*70)
-
-    example_questions = [
-        "Can I carry forward my leave if I resign?",
-        "What happens if my laptop is stolen?",
-        "Is maternity leave applicable during probation?",
-        "What are the working hours?",
-        "Tell me about leave",
-        "What's the weather today?"
-    ]
 
     while True:
         question = input("\nYou: ").strip()
@@ -637,12 +623,6 @@ def main():
         if question.lower() in ['quit', 'exit', 'q']:
             print("\n ChatBot: Goodbye! Have a great day!")
             break
-
-        if question.lower() == 'examples':
-            print("\n Example Questions:")
-            for i, q in enumerate(example_questions, 1):
-                print(f"  {i}. {q}")
-            continue
 
         # Get answer (without showing processing details)
         result = assistant.ask(question)
