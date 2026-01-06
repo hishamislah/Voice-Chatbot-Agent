@@ -687,8 +687,7 @@ RULES:
                     response_text = (
                         "[IT Support] I'm sorry the previous solutions didn't resolve your issue. "
                         "Would you like me to create a JIRA ticket for further assistance? "
-                        "An IT support technician will review your case and get back to you.\n\n"
-                        "(JIRA integration coming soon - for now, please contact IT helpdesk directly)"
+                        "An IT support technician will review your case and get back to you."
                     )
 
                     for char in response_text:
