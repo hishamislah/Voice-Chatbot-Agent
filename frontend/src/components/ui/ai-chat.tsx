@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Send, User, Briefcase, Headphones } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { chatAPI, Source, APIError } from "@/services/api";
 
 type AgentType = "personal" | "hr" | "it";
 
@@ -37,19 +38,52 @@ const agents: Agent[] = [
   },
 ];
 
+interface Message {
+  sender: "ai" | "user";
+  text: string;
+  sources?: Source[];
+  isStreaming?: boolean;  // NEW: Track if message is currently streaming
+}
+
 export default function AIChatCard({ className }: { className?: string }) {
   const [activeAgent, setActiveAgent] = useState<AgentType>("personal");
-  const [messages, setMessages] = useState<Record<AgentType, { sender: "ai" | "user"; text: string }[]>>({
-    personal: [{ sender: "ai", text: agents[0].greeting }],
-    hr: [{ sender: "ai", text: agents[1].greeting }],
-    it: [{ sender: "ai", text: agents[2].greeting }],
+  const [messages, setMessages] = useState<Record<AgentType, Message[]>>({
+    personal: [],
+    hr: [],
+    it: [],
   });
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
+  const [sessionId, setSessionId] = useState<string>("");
+  const [error, setError] = useState<string>("");
+  const [isInitializing, setIsInitializing] = useState(true);
 
   useEffect(() => {
     setIsMounted(true);
+
+    // Initialize session on mount
+    const initSession = async () => {
+      try {
+        const session = await chatAPI.createSession();
+        setSessionId(session.session_id);
+
+        // Add greeting to Personal Assistant only
+        setMessages({
+          personal: [{ sender: "ai", text: agents[0].greeting }],
+          hr: [],
+          it: [],
+        });
+
+        setIsInitializing(false);
+      } catch (err) {
+        console.error("Failed to create session:", err);
+        setError("Failed to connect to server. Please refresh the page.");
+        setIsInitializing(false);
+      }
+    };
+
+    initSession();
   }, []);
 
   // Generate consistent particle configurations
@@ -67,27 +101,106 @@ export default function AIChatCard({ className }: { className?: string }) {
   const currentAgent = agents.find((a) => a.id === activeAgent)!;
   const currentMessages = messages[activeAgent];
 
-  const handleSend = () => {
-    if (!input.trim()) return;
+  const handleSend = async () => {
+    if (!input.trim() || !sessionId || isTyping) return;
 
-    setMessages({
-      ...messages,
-      [activeAgent]: [...currentMessages, { sender: "user", text: input }],
-    });
+    const userMessage = input.trim();
+
+    // Add user message immediately
+    setMessages((prev) => ({
+      ...prev,
+      [activeAgent]: [...prev[activeAgent], { sender: "user", text: userMessage }],
+    }));
     setInput("");
     setIsTyping(true);
+    setError("");
 
-    // Simulate AI response
-    setTimeout(() => {
-      setMessages((prev) => ({
-        ...prev,
-        [activeAgent]: [
-          ...prev[activeAgent],
-          { sender: "ai", text: `🤖 This is a response from ${currentAgent.name}.` },
-        ],
-      }));
-      setIsTyping(false);
-    }, 1200);
+    // Add empty AI message that will be filled via streaming
+    const aiMessageIndex = messages[activeAgent].length + 1;
+    setMessages((prev) => ({
+      ...prev,
+      [activeAgent]: [
+        ...prev[activeAgent],
+        { sender: "ai", text: "", isStreaming: true }
+      ],
+    }));
+
+    let accumulatedText = "";
+    const currentAgentAtStart = activeAgent;
+
+    chatAPI.streamMessage(
+      {
+        session_id: sessionId,
+        message: userMessage,
+        agent: activeAgent,
+      },
+      // onToken callback - update the streaming message
+      (token: string) => {
+        accumulatedText += token;
+
+        setMessages((prev) => {
+          const agentMessages = [...prev[currentAgentAtStart]];
+          agentMessages[aiMessageIndex] = {
+            sender: "ai",
+            text: accumulatedText,
+            isStreaming: true
+          };
+          return { ...prev, [currentAgentAtStart]: agentMessages };
+        });
+      },
+      // onComplete callback - mark streaming as complete and add sources
+      (data) => {
+        setMessages((prev) => {
+          const agentMessages = [...prev[currentAgentAtStart]];
+          agentMessages[aiMessageIndex] = {
+            sender: "ai",
+            text: accumulatedText,
+            sources: data.sources.length > 0 ? data.sources : undefined,
+            isStreaming: false
+          };
+          return { ...prev, [currentAgentAtStart]: agentMessages };
+        });
+
+        // Handle agent transfer
+        if (data.agent !== currentAgentAtStart) {
+          const newAgent = data.agent as AgentType;
+
+          setMessages((prev) => {
+            if (prev[newAgent].length === 0) {
+              const agentGreeting = agents.find((a) => a.id === newAgent)?.greeting || "";
+              return {
+                ...prev,
+                [newAgent]: [{ sender: "ai", text: agentGreeting }],
+              };
+            }
+            return prev;
+          });
+
+          // Switch to new agent
+          setActiveAgent(newAgent);
+        }
+
+        setIsTyping(false);
+      },
+      // onError callback
+      (error: string) => {
+        console.error("Stream error:", error);
+        setError(error);
+
+        // Update message with error
+        setMessages((prev) => {
+          const agentMessages = [...prev[currentAgentAtStart]];
+          agentMessages[aiMessageIndex] = {
+            sender: "ai",
+            text: accumulatedText || "Sorry, there was an error processing your message.",
+            isStreaming: false
+          };
+          return { ...prev, [currentAgentAtStart]: agentMessages };
+        });
+
+        setIsTyping(false);
+      }
+    );
   };
 
   return (
@@ -165,22 +278,44 @@ export default function AIChatCard({ className }: { className?: string }) {
 
         {/* Messages */}
         <div className="flex-1 px-4 py-3 overflow-y-auto space-y-3 text-sm flex flex-col relative z-10">
-          {currentMessages.map((msg, i) => (
-            <motion.div
-              key={i}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4 }}
-              className={cn(
-                "px-3 py-2 rounded-xl max-w-[80%] shadow-md backdrop-blur-md",
-                msg.sender === "ai"
-                  ? "bg-white/10 text-white self-start"
-                  : "bg-white/30 text-black font-semibold self-end"
-              )}
-            >
-              {msg.text}
-            </motion.div>
-          ))}
+          {isInitializing ? (
+            <div className="text-white/60 text-center">Connecting to server...</div>
+          ) : (
+            currentMessages.map((msg, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4 }}
+                className={cn(
+                  "px-3 py-2 rounded-xl max-w-[80%] shadow-md backdrop-blur-md",
+                  msg.sender === "ai"
+                    ? "bg-white/10 text-white self-start"
+                    : "bg-white/30 text-black font-semibold self-end"
+                )}
+              >
+                <div className="whitespace-pre-wrap">
+                  {msg.text}
+                  {/* Streaming cursor animation */}
+                  {msg.isStreaming && (
+                    <span className="inline-block w-[2px] h-4 bg-white animate-pulse ml-0.5 align-middle">|</span>
+                  )}
+                </div>
+
+                {/* Render sources if available */}
+                {msg.sources && msg.sources.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-white/20 text-xs text-white/60">
+                    <div className="font-semibold mb-1">Sources:</div>
+                    {msg.sources.map((source, idx) => (
+                      <div key={idx} className="ml-2">
+                        [{idx + 1}] {source.source} - Page {source.page}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </motion.div>
+            ))
+          )}
 
           {/* AI Typing Indicator */}
           {isTyping && (
@@ -198,20 +333,29 @@ export default function AIChatCard({ className }: { className?: string }) {
         </div>
 
         {/* Input */}
-        <div className="flex items-center gap-2 p-3 border-t border-white/10 relative z-10">
-          <input
-            className="flex-1 px-3 py-2 text-sm bg-black/50 rounded-lg border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-white/50 placeholder:text-white/40"
-            placeholder="Type a message..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-          />
-          <button
-            onClick={handleSend}
-            className="p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
-          >
-            <Send className="w-4 h-4 text-white" />
-          </button>
+        <div className="flex flex-col gap-2 p-3 border-t border-white/10 relative z-10">
+          {error && (
+            <div className="text-xs text-red-400 bg-red-500/10 px-2 py-1 rounded">
+              {error}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <input
+              className="flex-1 px-3 py-2 text-sm bg-black/50 rounded-lg border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-white/50 placeholder:text-white/40 disabled:opacity-50"
+              placeholder={isInitializing ? "Connecting..." : "Type a message..."}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
+              disabled={isInitializing || isTyping}
+            />
+            <button
+              onClick={handleSend}
+              className="p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={isInitializing || isTyping || !input.trim()}
+            >
+              <Send className="w-4 h-4 text-white" />
+            </button>
+          </div>
         </div>
       </div>
     </div>

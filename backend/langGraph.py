@@ -191,7 +191,46 @@ Context:
             "answer": answer,
             "sources": sources
         }
-    
+
+    async def generate_answer_with_citations_stream(self, question: str, context_chunks: list):
+        """
+        Tool 3 (Streaming): Generate answer with citations - streams tokens as they're generated
+
+        Yields:
+            str: Individual tokens from the LLM
+        """
+        if not context_chunks:
+            yield "I couldn't find relevant information in the policy documents."
+            return
+
+        # Combine chunks into context with source markers
+        context = "\n\n".join([
+            f"[Source: {chunk['source']}, Page {chunk['page']}]\n{chunk['content']}"
+            for chunk in context_chunks
+        ])
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are a helpful enterprise policy assistant.
+
+CRITICAL RULES:
+1. Answer ONLY using the provided context
+2. ALWAYS cite your sources using this format: [Source: filename, Page X]
+3. If the answer is not in the context, say "I don't have enough information"
+4. Be precise and factual
+5. If there are conflicting policies, mention both with their sources
+
+Context:
+{context}"""),
+            ("user", "{question}")
+        ])
+
+        chain = prompt | self.llm
+
+        # Stream tokens from LLM
+        async for chunk in chain.astream({"context": context, "question": question}):
+            if hasattr(chunk, 'content') and chunk.content:
+                yield chunk.content
+
     def generate_clarification(self, question: str, reason: str) -> str:
         """
         Tool 4: Generate clarification question
