@@ -31,8 +31,9 @@ from livekit.agents import (
 )
 from livekit.agents.voice import Agent, AgentSession
 from livekit.plugins.silero import VAD
-from livekit.plugins.groq import STT, LLM
+from livekit.plugins.groq import STT
 from voice.edge_tts_adapter import EdgeTTS
+from voice.chat_api_llm import ChatAPILLM, AGENT_VOICES
 
 
 async def entrypoint(ctx: JobContext):
@@ -47,19 +48,34 @@ async def entrypoint(ctx: JobContext):
 
     # Create the agent with instructions
     agent = Agent(
-        instructions="""You are a helpful enterprise assistant for voice conversations.
-You can answer general questions about company policies, HR matters, and IT support.
-Be concise and professional. Keep responses brief and natural for voice output.
-Limit responses to 2-3 sentences for natural conversation flow.""",
+        instructions="""You are a voice interface for the enterprise assistant.
+The backend handles all responses through the multi-agent system (Personal Assistant, HR, IT).
+Keep your acknowledgments brief as responses come from the chat API.""",
     )
 
-    # Create session with STT (Groq), LLM (Groq), TTS (Edge TTS - FREE), VAD (Silero)
+    # Create TTS with initial voice (Personal Assistant)
+    tts = EdgeTTS(voice=AGENT_VOICES["personal"])
+
+    # Create LLM with Chat API
+    chat_llm = ChatAPILLM(api_base="http://localhost:8000")
+
+    # Set up voice switching callback
+    def on_agent_change(new_agent: str):
+        new_voice = AGENT_VOICES.get(new_agent, AGENT_VOICES["personal"])
+        tts.update_options(voice=new_voice)
+        print(f"[VOICE] Switched to {new_agent} voice: {new_voice}")
+
+    chat_llm.set_agent_change_callback(on_agent_change)
+
+    # Create session with STT (Groq), LLM (Chat API), TTS (Edge TTS), VAD (Silero)
     session = AgentSession(
         stt=STT(model="whisper-large-v3"),
-        llm=LLM(model="llama-3.3-70b-versatile"),
-        tts=EdgeTTS(voice="en-US-AriaNeural"),  # Free Microsoft TTS
+        llm=chat_llm,
+        tts=tts,
         vad=VAD.load(),
     )
+    print("[VOICE] Using Chat API LLM (RAG + Multi-Agent)")
+    print(f"[VOICE] Agent voices: Personal={AGENT_VOICES['personal']}, HR={AGENT_VOICES['hr']}, IT={AGENT_VOICES['it']}")
 
     # Start the session (must await)
     await session.start(agent=agent, room=ctx.room)

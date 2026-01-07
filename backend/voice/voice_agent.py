@@ -27,8 +27,9 @@ from livekit.agents import (
 )
 from livekit.agents.voice import Agent, AgentSession
 from livekit.plugins.silero import VAD
-from livekit.plugins.groq import STT, LLM
+from livekit.plugins.groq import STT
 from voice.edge_tts_adapter import EdgeTTS as TTS_Edge
+from voice.chat_api_llm import ChatAPILLM, AGENT_VOICES
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -52,23 +53,34 @@ async def entrypoint(ctx: JobContext):
 
     # Create agent with instructions
     agent = Agent(
-        instructions="""You are a helpful enterprise assistant for voice conversations.
-You can answer general questions about company policies, HR matters, and IT support.
-Be concise and professional. Keep responses brief and natural for voice output.
-When users ask about:
-- HR topics (leave, benefits, policies): Provide helpful HR guidance
-- IT topics (technical issues, security): Provide IT support guidance
-- General questions: Answer helpfully and offer to connect to specialists if needed
-Limit responses to 2-3 sentences for natural conversation flow.""",
+        instructions="""You are a voice interface for the enterprise assistant.
+The backend handles all responses through the multi-agent system (Personal Assistant, HR, IT).
+Keep your acknowledgments brief as responses come from the chat API.""",
     )
 
-    # Create session with Groq STT/LLM and Edge TTS (free)
+    # Create TTS with initial voice (Personal Assistant)
+    tts = TTS_Edge(voice=AGENT_VOICES["personal"])
+
+    # Create LLM with Chat API
+    chat_llm = ChatAPILLM(api_base="http://localhost:8000")
+
+    # Set up voice switching callback - when agent changes, switch TTS voice
+    def on_agent_change(new_agent: str):
+        new_voice = AGENT_VOICES.get(new_agent, AGENT_VOICES["personal"])
+        tts.update_options(voice=new_voice)
+        logger.info(f"Switched to {new_agent} voice: {new_voice}")
+
+    chat_llm.set_agent_change_callback(on_agent_change)
+
+    # Create session with Groq STT, Chat API LLM (RAG + Multi-Agent), and Edge TTS
     session = AgentSession(
         stt=STT(model="whisper-large-v3"),
-        llm=LLM(model="llama-3.3-70b-versatile"),
-        tts=TTS_Edge(voice="en-US-AriaNeural"),  # Free Microsoft Edge TTS
+        llm=chat_llm,  # Uses Chat API with RAG + Multi-Agent
+        tts=tts,  # Free Microsoft Edge TTS with voice switching
         vad=VAD.load(),
     )
+    logger.info("Using Chat API LLM (RAG + Multi-Agent)")
+    logger.info(f"Agent voices: Personal={AGENT_VOICES['personal']}, HR={AGENT_VOICES['hr']}, IT={AGENT_VOICES['it']}")
 
     # Start the session (must await)
     await session.start(agent=agent, room=ctx.room)

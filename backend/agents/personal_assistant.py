@@ -37,13 +37,16 @@ class PersonalAssistantTools:
 
 Classify the user's message into ONE of these intents:
 
-1. "transfer_request" - User EXPLICITLY requests HR or IT support
+1. "transfer_request" - User EXPLICITLY requests HR, IT, or Personal Assistant
    - Keywords: "HR", "human resources", "talk to HR", "connect to HR", "HR agent"
    - Keywords: "IT", "IT support", "tech support", "talk to IT", "connect to IT", "IT agent"
+   - Keywords: "personal assistant", "main menu", "go back", "transfer back"
    - Example: "I need to talk to HR" → transfer_request (hr)
    - Example: "Can I speak with IT support?" → transfer_request (it)
    - Example: "Connect me to HR" → transfer_request (hr)
    - Example: "Talk to IT" → transfer_request (it)
+   - Example: "Transfer to personal assistant" → transfer_request (personal)
+   - Example: "Go back to main menu" → transfer_request (personal)
 
 2. "greeting" - User is greeting or starting conversation
    - Example: "Hello", "Hi", "Hey there", "Good morning"
@@ -68,7 +71,7 @@ CRITICAL RULES:
 
 Respond in this exact format:
 INTENT: <intent>
-TARGET: <hr|it|none>
+TARGET: <hr|it|personal|none>
 REASON: <brief reason>"""),
             ("user", "{message}")
         ])
@@ -89,7 +92,7 @@ REASON: <brief reason>"""),
 
         return {
             "intent": intent,
-            "target_agent": target if target in ["hr", "it"] else "none"
+            "target_agent": target if target in ["hr", "it", "personal"] else "none"
         }
 
     def answer_general_query(self, message: str) -> str:

@@ -278,7 +278,7 @@ async def chat(request: ChatRequest):
     Main chat endpoint - processes user messages through multi-agent system
 
     Flow:
-    1. Validate session exists
+    1. Validate session exists (auto-create if not found)
     2. Prepare initial state for LangGraph
     3. Execute graph (routes through Personal Assistant → Specialists)
     4. Save messages to session history
@@ -291,12 +291,19 @@ async def chat(request: ChatRequest):
         ChatResponse: AI response with sources and metadata
 
     Raises:
-        HTTPException: If session not found or processing error
+        HTTPException: If processing error
     """
-    # Validate session
+    # Validate session - auto-create if not found (handles server restarts gracefully)
     session = session_manager.get_session(request.session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        # Auto-create session with the provided ID
+        session_manager.sessions[request.session_id] = {
+            "created_at": datetime.now().isoformat(),
+            "messages": [],
+            "current_agent": request.agent
+        }
+        session = session_manager.get_session(request.session_id)
+        print(f"[INFO] Auto-created session: {request.session_id}")
 
     # Check if systems are initialized
     if not rag_system or not agent_graph:
@@ -462,7 +469,7 @@ async def chat_stream(request: ChatRequest):
     Streaming chat endpoint - sends tokens via Server-Sent Events (SSE)
 
     Flow:
-    1. Validate session exists
+    1. Validate session exists (auto-create if not found)
     2. Determine which agent to use
     3. Stream tokens as they're generated from LLM
     4. Send completion event with metadata (sources, agent, workflow_path)
@@ -474,12 +481,19 @@ async def chat_stream(request: ChatRequest):
         StreamingResponse: SSE stream with token and completion events
 
     Raises:
-        HTTPException: If session not found or processing error
+        HTTPException: If processing error
     """
-    # Validate session
+    # Validate session - auto-create if not found (handles server restarts gracefully)
     session = session_manager.get_session(request.session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        # Auto-create session with the provided ID to handle server restarts
+        session_manager.sessions[request.session_id] = {
+            "created_at": datetime.now().isoformat(),
+            "messages": [],
+            "current_agent": request.agent
+        }
+        session = session_manager.get_session(request.session_id)
+        print(f"[INFO] Auto-created session: {request.session_id}")
 
     # Check if systems are initialized
     if not rag_system or not agent_graph:
@@ -541,6 +555,9 @@ async def chat_stream(request: ChatRequest):
                     elif target == 'it':
                         final_agent = 'it'
                         response_text = "Connecting you to our IT Support specialist now. How can they help you today?"
+                    elif target == 'personal':
+                        # Already with Personal Assistant
+                        response_text = "You're already with me, the Personal Assistant! How can I help you today?"
                     else:
                         response_text = "I'd be happy to connect you to the right specialist. Could you specify if you need HR or IT support?"
 
@@ -584,97 +601,121 @@ async def chat_stream(request: ChatRequest):
                         await asyncio.sleep(0.01)
 
             elif entry_agent == "hr":
-                # HR Agent - use RAG pipeline with streaming
-                policy_tools = PolicyTools()
+                # HR Agent - first check for transfer requests
+                pa_tools = PersonalAssistantTools()
+                transfer_check = pa_tools.classify_intent(request.message)
 
-                # Intent classification for HR
-                classification = policy_tools.classify_intent(request.message)
-                specialist_intent = classification['intent']
-                category = classification['category']
-
-                if specialist_intent == "ambiguous":
-                    # Clarification needed
-                    clarification = policy_tools.generate_clarification(
-                        request.message,
-                        "Your question about HR policies needs more detail"
-                    )
-                    response_text = f"[HR Agent] {clarification}"
-
-                    for char in response_text:
-                        accumulated_answer += char
-                        yield f"event: token\n"
-                        yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
-                        await asyncio.sleep(0.01)
-
-                elif specialist_intent == "policy_query":
-                    # RAG retrieval and answer generation with streaming
-                    if category not in ["HR", "Leave"]:
-                        category = "HR"
-
-                    # Retrieve relevant chunks
-                    chunks = policy_tools.retrieve_policy(request.message, category, num_chunks=4)
-
-                    # Stream the answer
-                    prefix = "[HR Agent] "
-                    accumulated_answer = prefix
-
-                    # Send prefix first
-                    for char in prefix:
-                        yield f"event: token\n"
-                        yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
-                        await asyncio.sleep(0.01)
-
-                    # Stream answer tokens
-                    async for token in policy_tools.generate_answer_with_citations_stream(request.message, chunks):
-                        accumulated_answer += token
-                        yield f"event: token\n"
-                        yield f"data: {json.dumps({'content': token, 'type': 'token'})}\n\n"
-
-                    # Extract sources
-                    final_sources = [
-                        {
-                            "source": chunk['source'],
-                            "page": chunk['page'],
-                            "rank": chunk['rank'],
-                            "preview": chunk['content'][:200] + "..." if len(chunk['content']) > 200 else chunk['content']
-                        }
-                        for chunk in chunks
-                    ]
-
-                else:  # out_of_scope
-                    response_text = (
-                        "[HR Agent] I specialize in HR and Leave policies (hiring, termination, probation, "
-                        "annual leave, sick leave, maternity leave, etc.). "
-                        "Your question seems outside my area of expertise.\n\n"
-                        "If you need IT support or have technical questions, please ask the Personal Assistant "
-                        "to connect you to IT Support."
-                    )
+                if transfer_check['intent'] == 'transfer_request':
+                    # Handle transfer from HR to another agent
+                    target = transfer_check['target_agent']
+                    if target == 'it':
+                        final_agent = 'it'
+                        response_text = "[HR Agent] Connecting you to our IT Support specialist now. How can they help you today?"
+                    elif target == 'hr':
+                        # Already in HR, just acknowledge
+                        response_text = "[HR Agent] You're already connected to HR. How can I help you?"
+                    else:
+                        # Transfer to personal assistant
+                        final_agent = 'personal'
+                        response_text = "[HR Agent] Transferring you back to the Personal Assistant. How can they help you today?"
 
                     for char in response_text:
                         accumulated_answer += char
                         yield f"event: token\n"
                         yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
                         await asyncio.sleep(0.01)
+
+                else:
+                    # Continue with HR Agent processing
+                    policy_tools = PolicyTools()
+
+                    # Intent classification for HR
+                    classification = policy_tools.classify_intent(request.message)
+                    specialist_intent = classification['intent']
+                    category = classification['category']
+
+                    if specialist_intent == "ambiguous":
+                        # Clarification needed
+                        clarification = policy_tools.generate_clarification(
+                            request.message,
+                            "Your question about HR policies needs more detail"
+                        )
+                        response_text = f"[HR Agent] {clarification}"
+
+                        for char in response_text:
+                            accumulated_answer += char
+                            yield f"event: token\n"
+                            yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
+                            await asyncio.sleep(0.01)
+
+                    elif specialist_intent == "policy_query":
+                        # RAG retrieval and answer generation with streaming
+                        if category not in ["HR", "Leave"]:
+                            category = "HR"
+
+                        # Retrieve relevant chunks
+                        chunks = policy_tools.retrieve_policy(request.message, category, num_chunks=4)
+
+                        # Stream the answer
+                        prefix = "[HR Agent] "
+                        accumulated_answer = prefix
+
+                        # Send prefix first
+                        for char in prefix:
+                            yield f"event: token\n"
+                            yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
+                            await asyncio.sleep(0.01)
+
+                        # Stream answer tokens
+                        async for token in policy_tools.generate_answer_with_citations_stream(request.message, chunks):
+                            accumulated_answer += token
+                            yield f"event: token\n"
+                            yield f"data: {json.dumps({'content': token, 'type': 'token'})}\n\n"
+
+                        # Extract sources
+                        final_sources = [
+                            {
+                                "source": chunk['source'],
+                                "page": chunk['page'],
+                                "rank": chunk['rank'],
+                                "preview": chunk['content'][:200] + "..." if len(chunk['content']) > 200 else chunk['content']
+                            }
+                            for chunk in chunks
+                        ]
+
+                    else:  # out_of_scope
+                        response_text = (
+                            "[HR Agent] I specialize in HR and Leave policies (hiring, termination, probation, "
+                            "annual leave, sick leave, maternity leave, etc.). "
+                            "Your question seems outside my area of expertise.\n\n"
+                            "If you need IT support or have technical questions, please ask the Personal Assistant "
+                            "to connect you to IT Support."
+                        )
+
+                        for char in response_text:
+                            accumulated_answer += char
+                            yield f"event: token\n"
+                            yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
+                            await asyncio.sleep(0.01)
 
             elif entry_agent == "it":
-                # IT Agent - use IT-specific intent classifier with troubleshooting support
-                policy_tools = PolicyTools()
+                # IT Agent - first check for transfer requests
+                pa_tools = PersonalAssistantTools()
+                transfer_check = pa_tools.classify_intent(request.message)
 
-                # Use IT-specific intent classification (supports troubleshooting)
-                classification = policy_tools.classify_it_intent(request.message)
-                specialist_intent = classification['intent']
-                category = classification['category']
-
-                print(f"[IT Stream] Message: {request.message}")
-                print(f"[IT Stream] Classified intent: {specialist_intent}")
-
-                if specialist_intent == "ambiguous":
-                    # Clarification needed
-                    clarification = policy_tools.generate_clarification(
-                        request.message,
-                        "Your question about IT policies needs more detail"
-                    )
-                    response_text = f"[IT Support] {clarification}"
+                if transfer_check['intent'] == 'transfer_request':
+                    # Handle transfer from IT to another agent
+                    target = transfer_check['target_agent']
+                    if target == 'hr':
+                        final_agent = 'hr'
+                        response_text = "[IT Support] Connecting you to our HR specialist now. How can they help you today?"
+                    elif target == 'it':
+                        # Already in IT, just acknowledge
+                        response_text = "[IT Support] You're already connected to IT Support. How can I help you?"
+                    else:
+                        # Transfer to personal assistant
+                        final_agent = 'personal'
+                        response_text = "[IT Support] Transferring you back to the Personal Assistant. How can they help you today?"
 
                     for char in response_text:
                         accumulated_answer += char
@@ -682,48 +723,74 @@ async def chat_stream(request: ChatRequest):
                         yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
                         await asyncio.sleep(0.01)
 
-                elif specialist_intent == "policy_query":
-                    # RAG retrieval for IT policies
-                    if category not in ["IT", "Compliance"]:
-                        category = "IT"
+                else:
+                    # Continue with IT Agent processing
+                    policy_tools = PolicyTools()
 
-                    # Retrieve relevant chunks
-                    chunks = policy_tools.retrieve_policy(request.message, category, num_chunks=4)
+                    # Use IT-specific intent classification (supports troubleshooting)
+                    classification = policy_tools.classify_it_intent(request.message)
+                    specialist_intent = classification['intent']
+                    category = classification['category']
 
-                    # Stream the answer
-                    prefix = "[IT Support] "
-                    accumulated_answer = prefix
+                    print(f"[IT Stream] Message: {request.message}")
+                    print(f"[IT Stream] Classified intent: {specialist_intent}")
 
-                    # Send prefix first
-                    for char in prefix:
-                        yield f"event: token\n"
-                        yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
-                        await asyncio.sleep(0.01)
+                    if specialist_intent == "ambiguous":
+                        # Clarification needed
+                        clarification = policy_tools.generate_clarification(
+                            request.message,
+                            "Your question about IT policies needs more detail"
+                        )
+                        response_text = f"[IT Support] {clarification}"
 
-                    # Stream answer tokens
-                    async for token in policy_tools.generate_answer_with_citations_stream(request.message, chunks):
-                        accumulated_answer += token
-                        yield f"event: token\n"
-                        yield f"data: {json.dumps({'content': token, 'type': 'token'})}\n\n"
+                        for char in response_text:
+                            accumulated_answer += char
+                            yield f"event: token\n"
+                            yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
+                            await asyncio.sleep(0.01)
 
-                    # Extract sources
-                    final_sources = [
-                        {
-                            "source": chunk['source'],
-                            "page": chunk['page'],
-                            "rank": chunk['rank'],
-                            "preview": chunk['content'][:200] + "..." if len(chunk['content']) > 200 else chunk['content']
-                        }
-                        for chunk in chunks
-                    ]
+                    elif specialist_intent == "policy_query":
+                        # RAG retrieval for IT policies
+                        if category not in ["IT", "Compliance"]:
+                            category = "IT"
 
-                elif specialist_intent == "troubleshooting":
-                    # Troubleshooting - use LLM knowledge (NOT RAG)
-                    from langchain_core.prompts import ChatPromptTemplate
-                    from langchain_core.output_parsers import StrOutputParser
+                        # Retrieve relevant chunks
+                        chunks = policy_tools.retrieve_policy(request.message, category, num_chunks=4)
 
-                    prompt = ChatPromptTemplate.from_messages([
-                        ("system", """You are an IT Support specialist. Provide helpful troubleshooting steps for the user's technical issue.
+                        # Stream the answer
+                        prefix = "[IT Support] "
+                        accumulated_answer = prefix
+
+                        # Send prefix first
+                        for char in prefix:
+                            yield f"event: token\n"
+                            yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
+                            await asyncio.sleep(0.01)
+
+                        # Stream answer tokens
+                        async for token in policy_tools.generate_answer_with_citations_stream(request.message, chunks):
+                            accumulated_answer += token
+                            yield f"event: token\n"
+                            yield f"data: {json.dumps({'content': token, 'type': 'token'})}\n\n"
+
+                        # Extract sources
+                        final_sources = [
+                            {
+                                "source": chunk['source'],
+                                "page": chunk['page'],
+                                "rank": chunk['rank'],
+                                "preview": chunk['content'][:200] + "..." if len(chunk['content']) > 200 else chunk['content']
+                            }
+                            for chunk in chunks
+                        ]
+
+                    elif specialist_intent == "troubleshooting":
+                        # Troubleshooting - use LLM knowledge (NOT RAG)
+                        from langchain_core.prompts import ChatPromptTemplate
+                        from langchain_core.output_parsers import StrOutputParser
+
+                        prompt = ChatPromptTemplate.from_messages([
+                            ("system", """You are an IT Support specialist. Provide helpful troubleshooting steps for the user's technical issue.
 
 RULES:
 1. Give practical solutions the user can try immediately
@@ -732,56 +799,56 @@ RULES:
 4. Be concise but thorough
 5. End with: "\n\nIf this doesn't resolve your issue, let me know and I can help create a JIRA ticket for further assistance."
 """),
-                        ("user", "{question}")
-                    ])
+                            ("user", "{question}")
+                        ])
 
-                    chain = prompt | policy_tools.llm | StrOutputParser()
+                        chain = prompt | policy_tools.llm | StrOutputParser()
 
-                    # Stream the answer
-                    prefix = "[IT Support] "
-                    accumulated_answer = prefix
+                        # Stream the answer
+                        prefix = "[IT Support] "
+                        accumulated_answer = prefix
 
-                    # Send prefix first
-                    for char in prefix:
-                        yield f"event: token\n"
-                        yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
-                        await asyncio.sleep(0.01)
-
-                    # Stream troubleshooting answer
-                    async for chunk in (prompt | policy_tools.llm).astream({"question": request.message}):
-                        if hasattr(chunk, 'content') and chunk.content:
-                            accumulated_answer += chunk.content
+                        # Send prefix first
+                        for char in prefix:
                             yield f"event: token\n"
-                            yield f"data: {json.dumps({'content': chunk.content, 'type': 'token'})}\n\n"
+                            yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
+                            await asyncio.sleep(0.01)
 
-                elif specialist_intent == "follow_up_issue":
-                    # User says previous solution didn't work - offer JIRA ticket
-                    response_text = (
-                        "[IT Support] I'm sorry the previous solutions didn't resolve your issue. "
-                        "Would you like me to create a JIRA ticket for further assistance? "
-                        "An IT support technician will review your case and get back to you."
-                    )
+                        # Stream troubleshooting answer
+                        async for chunk in (prompt | policy_tools.llm).astream({"question": request.message}):
+                            if hasattr(chunk, 'content') and chunk.content:
+                                accumulated_answer += chunk.content
+                                yield f"event: token\n"
+                                yield f"data: {json.dumps({'content': chunk.content, 'type': 'token'})}\n\n"
 
-                    for char in response_text:
-                        accumulated_answer += char
-                        yield f"event: token\n"
-                        yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
-                        await asyncio.sleep(0.01)
+                    elif specialist_intent == "follow_up_issue":
+                        # User says previous solution didn't work - offer JIRA ticket
+                        response_text = (
+                            "[IT Support] I'm sorry the previous solutions didn't resolve your issue. "
+                            "Would you like me to create a JIRA ticket for further assistance? "
+                            "An IT support technician will review your case and get back to you."
+                        )
 
-                else:  # out_of_scope
-                    response_text = (
-                        "[IT Support] I specialize in IT Security and Compliance policies (device security, "
-                        "passwords, VPN, data privacy, code of conduct, etc.). "
-                        "Your question seems outside my area of expertise.\n\n"
-                        "If you need HR assistance or have questions about employee policies, please ask the "
-                        "Personal Assistant to connect you to the HR Agent."
-                    )
+                        for char in response_text:
+                            accumulated_answer += char
+                            yield f"event: token\n"
+                            yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
+                            await asyncio.sleep(0.01)
 
-                    for char in response_text:
-                        accumulated_answer += char
-                        yield f"event: token\n"
-                        yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
-                        await asyncio.sleep(0.01)
+                    else:  # out_of_scope
+                        response_text = (
+                            "[IT Support] I specialize in IT Security and Compliance policies (device security, "
+                            "passwords, VPN, data privacy, code of conduct, etc.). "
+                            "Your question seems outside my area of expertise.\n\n"
+                            "If you need HR assistance or have questions about employee policies, please ask the "
+                            "Personal Assistant to connect you to the HR Agent."
+                        )
+
+                        for char in response_text:
+                            accumulated_answer += char
+                            yield f"event: token\n"
+                            yield f"data: {json.dumps({'content': char, 'type': 'token'})}\n\n"
+                            await asyncio.sleep(0.01)
 
             # Save AI response to session
             session_manager.add_message(request.session_id, {
